@@ -99,8 +99,8 @@ body { background:#000; overflow:hidden; font-family:Arial,sans-serif; user-sele
   <h1>3D DRILLER</h1>
   <div class="sub">미스터 드릴러 3D</div>
   <div class="info-box">
-    <b>WASD</b> 또는 <b>방향키</b> : 수평 이동 &amp; 드릴링<br>
-    <b>Space</b> 또는 <b>Z</b> : 아래로 드릴링<br>
+    <b>WASD</b> / <b>↑←→</b> : 수평 이동 &amp; 드릴링<br>
+    <b>↓</b> / <b>Space</b> / <b>Z</b> : 아래로 드릴링<br>
     <b>Q / E</b> : 카메라 90° 회전<br>
     <span class="dot" style="background:#ee3333"></span><span class="dot" style="background:#2288ee"></span><span class="dot" style="background:#22cc44"></span><span class="dot" style="background:#eecc22"></span><span class="dot" style="background:#bb33ee"></span>
     같은 색 블록이 연결되면 <b>연쇄 폭발 보너스!</b><br>
@@ -120,7 +120,7 @@ body { background:#000; overflow:hidden; font-family:Arial,sans-serif; user-sele
 </div>
 
 <!-- Controls hint -->
-<div id="hint">WASD / 방향키: 이동 | Space / Z: 아래 드릴 | Q / E: 카메라 회전</div>
+<div id="hint">WASD / ↑←→: 이동 | ↓ / Space / Z: 아래 드릴 | Q / E: 카메라 회전</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -157,7 +157,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x00091a);
 scene.fog = new THREE.Fog(0x00091a, 14, 30);
 
-const cam = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 80);
+const cam = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 80);
 
 // Lights
 scene.add(new THREE.AmbientLight(0xaabbdd, 0.6));
@@ -190,6 +190,12 @@ let camAngle = 0;            // degrees (multiples of 90)
 let lastMoveT = 0;
 let lastFallT = 0;
 let breaking  = [];          // [{mesh, t}]
+
+// Block settling (Mr. Driller gravity)
+let settleState = 'idle';    // 'idle' | 'settling'
+let settleAccum = 0;
+const SETTLE_TICK = 0.14;    // seconds per block-gravity step
+let fallingMeshes = [];      // [{mesh, targetY}] for smooth fall animation
 
 // Smooth camera
 const camPos    = new THREE.Vector3();
@@ -234,6 +240,9 @@ function generateWorld() {
     if (scene.children[i].userData.isBlock) scene.remove(scene.children[i]);
   }
   breaking = [];
+  fallingMeshes = [];
+  settleState = 'idle';
+  settleAccum = 0;
 
   world  = [];
   meshes = [];
@@ -335,6 +344,13 @@ function breakAt(x, y, z) {
   } else {
     p.score += depthMul; // tiny bonus even for single blocks
   }
+
+  // Trigger block-gravity settling after every break
+  if (settleState === 'idle') {
+    settleState = 'settling';
+    settleAccum = SETTLE_TICK; // start first step immediately
+  }
+
   return chain;
 }
 
@@ -363,28 +379,30 @@ function moveDelta(key) {
   const map = {
     'w':          [ f.x,  0,  f.z],
     'arrowup':    [ f.x,  0,  f.z],
-    's':          [-f.x,  0, -f.z],
-    'arrowdown':  [-f.x,  0, -f.z],
+    's':          [-f.x,  0, -f.z],  // WASD backward
+    'arrowdown':  [0,  1,  0],       // ↓ = drill DOWN (intuitive)
     'a':          [-r.x,  0, -r.z],
     'arrowleft':  [-r.x,  0, -r.z],
     'd':          [ r.x,  0,  r.z],
     'arrowright': [ r.x,  0,  r.z],
-    ' ':          [0,  1, 0],
-    'z':          [0,  1, 0],
+    ' ':          [0,  1,  0],
+    'z':          [0,  1,  0],
   };
   return map[key];
 }
 
 // ── Player move / gravity ─────────────────────────────────────────────────
+// Returns: 0 = blocked, 1 = moved into empty cell, 2 = drilled a block
 function tryMove(dx, dy, dz) {
   const nx = p.x + dx, ny = p.y + dy, nz = p.z + dz;
-  if (!valid(nx, ny, nz)) return false;
+  if (!valid(nx, ny, nz)) return 0;
   const t = world[nx][ny][nz];
-  if (t === WALL) return false;
-  if (t !== EMPTY) breakAt(nx, ny, nz);
+  if (t === WALL) return 0;
+  const drilled = (t !== EMPTY);
+  if (drilled) breakAt(nx, ny, nz);
   p.x = nx; p.y = ny; p.z = nz;
   p.depth = Math.max(p.depth, p.y);
-  return true;
+  return drilled ? 2 : 1;
 }
 
 function applyGravity() {
@@ -393,6 +411,68 @@ function applyGravity() {
   if (world[p.x][ny][p.z] !== EMPTY) return; // blocked below
   p.y = ny;
   p.depth = Math.max(p.depth, p.y);
+}
+
+// ── Block settling (world gravity) ───────────────────────────────────────
+// One step: every unsupported interior block drops 1 cell.
+// Returns number of blocks that actually moved.
+function settleStep() {
+  // Gather all floating blocks, bottom-first so cascades resolve correctly.
+  const floaters = [];
+  for (let x = 1; x < W - 1; x++) {
+    for (let z = 1; z < D - 1; z++) {
+      for (let y = H - 2; y >= 2; y--) {        // bottom → top
+        const t = world[x][y][z];
+        if (t !== EMPTY && t !== WALL && world[x][y + 1][z] === EMPTY) {
+          floaters.push([x, y, z, t]);
+        }
+      }
+    }
+  }
+
+  if (floaters.length === 0) return 0;
+
+  let moved = 0;
+  const landed = [];   // blocks that just reached a solid floor
+
+  for (const [x, y, z, t] of floaters) {
+    const ny = y + 1;
+    if (world[x][ny][z] !== EMPTY) continue; // another floater already there
+
+    // Move down one cell in world data
+    world[x][y][z] = EMPTY;
+    world[x][ny][z] = t;
+    moved++;
+
+    // Transfer mesh and enqueue smooth-fall animation
+    const mesh = meshes[x][y][z];
+    if (mesh) {
+      meshes[x][y][z]  = null;
+      meshes[x][ny][z] = mesh;
+      fallingMeshes.push({ mesh, targetY: g2w(x, ny, z).y });
+    }
+
+    // If the cell below the new position is occupied (or bottom), block landed
+    const nny = ny + 1;
+    if (nny >= H || world[x][nny][z] !== EMPTY) {
+      landed.push([x, ny, z, t]);
+    }
+  }
+
+  // Chain-reaction check: landed blocks adjacent to same colour → break
+  for (const [x, y, z, t] of landed) {
+    if (world[x][y][z] !== t) continue; // already cleared by earlier chain
+    const dirs = [[1,0,0],[-1,0,0],[0,-1,0],[0,1,0],[0,0,1],[0,0,-1]];
+    for (const [dx, dy, dz] of dirs) {
+      const nx = x+dx, ny2 = y+dy, nz = z+dz;
+      if (valid(nx, ny2, nz) && world[nx][ny2][nz] === t) {
+        breakAt(x, y, z);   // will set settleState='settling' again if needed
+        break;
+      }
+    }
+  }
+
+  return moved;
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────
@@ -421,21 +501,44 @@ function updateUI() {
 
 // ── Camera ────────────────────────────────────────────────────────────────
 function updateCamera(alpha) {
-  const r   = camAngle * Math.PI / 180;
-  const dist = 10, rise = 6;
-  const wp  = g2w(p.x, p.y, p.z);
+  const r    = camAngle * Math.PI / 180;
+  const dist = 6, rise = 10;           // steeper angle: ~59° above horizontal
+  const wp   = g2w(p.x, p.y, p.z);
 
-  const ideal = new THREE.Vector3(
+  // Ideal camera sits behind and above the player
+  const idealPos = new THREE.Vector3(
     wp.x - Math.sin(r) * dist,
     wp.y + rise,
     wp.z - Math.cos(r) * dist
   );
-  camPos.lerp(ideal, alpha);
-  camTarget.lerp(wp, alpha * 1.2);
+
+  // Grid-based camera collision: scan ray from player to ideal position
+  // and pull camera forward if it would enter a block.
+  const dir       = idealPos.clone().sub(wp);
+  const idealDist = dir.length();
+  dir.normalize();
+
+  let safeDist = idealDist;
+  for (let d = 1.5; d <= idealDist; d += 0.7) {
+    const pos = wp.clone().addScaledVector(dir, d);
+    const gx  = Math.round(pos.x + W / 2);
+    const gy  = Math.round(-pos.y);
+    const gz  = Math.round(pos.z + D / 2);
+    if (valid(gx, gy, gz) && world[gx][gy][gz] !== EMPTY) {
+      safeDist = Math.max(2.0, d - 0.7);
+      break;
+    }
+  }
+
+  const finalPos = wp.clone().addScaledVector(dir, safeDist);
+
+  camPos.lerp(finalPos, alpha);
+  // Look slightly below the player so you can see what's underfoot
+  camTarget.lerp(new THREE.Vector3(wp.x, wp.y - 2.5, wp.z), alpha * 1.3);
 
   cam.position.copy(camPos);
   cam.lookAt(camTarget);
-  torch.position.set(wp.x, wp.y + 1.2, wp.z);
+  torch.position.set(wp.x, wp.y + 1, wp.z);
 }
 
 // ── Game flow ─────────────────────────────────────────────────────────────
@@ -449,12 +552,15 @@ function startGame() {
 
   resetPlayer();
   camAngle = 0;
+  settleState = 'idle';
+  settleAccum  = 0;
+  fallingMeshes = [];
   generateWorld();
 
   const sp = g2w(p.x, p.y, p.z);
   vPos.copy(sp); tPos.copy(sp);
-  camPos.set(sp.x, sp.y + 6, sp.z - 10);
-  camTarget.copy(sp);
+  camPos.set(sp.x, sp.y + 10, sp.z - 6);   // match new rise=10, dist=6
+  camTarget.set(sp.x, sp.y - 2.5, sp.z);
 
   lastMoveT = lastFallT = Date.now();
   gameActive = true;
@@ -486,25 +592,58 @@ const clock = new THREE.Clock();
   const now = Date.now();
 
   if (gameActive) {
-    // Oxygen drain
+    // Oxygen drain (always)
     p.o2 -= O2_DRAIN * dt;
     if (p.o2 <= 0) { p.o2 = 0; gameOver(); }
 
-    // Player input → move
-    if (now - lastMoveT > MOVE_MS) {
-      const MOVE_KEYS = ['w','arrowup','s','arrowdown','a','arrowleft','d','arrowright',' ','z'];
-      for (const k of MOVE_KEYS) {
-        if (keys[k]) {
-          const d = moveDelta(k);
-          if (d && tryMove(...d)) { lastMoveT = now; break; }
+    if (settleState === 'idle') {
+      // ── Normal play: accept input and apply player gravity ──────────────
+
+      // Player input → move
+      if (now - lastMoveT > MOVE_MS) {
+        const MOVE_KEYS = ['w','arrowup','s','arrowdown','a','arrowleft','d','arrowright',' ','z'];
+        for (const k of MOVE_KEYS) {
+          if (keys[k]) {
+            const d = moveDelta(k);
+            if (d) {
+              const result = tryMove(...d);
+              if (result !== 0) {
+                // Extra 80 ms cooldown when drilling (feels more deliberate)
+                lastMoveT = now + (result === 2 ? 80 : 0);
+                break;
+              }
+            }
+          }
         }
       }
+
+      // Player gravity
+      if (now - lastFallT > FALL_MS) {
+        applyGravity();
+        lastFallT = now;
+      }
+
+    } else {
+      // ── Settling: blocks fall, player input locked ──────────────────────
+      settleAccum += dt;
+      if (settleAccum >= SETTLE_TICK) {
+        settleAccum -= SETTLE_TICK;
+        const moved = settleStep();
+        if (moved === 0) settleState = 'idle'; // all settled
+      }
+      // Keep lastFallT current so player gravity resumes smoothly after settling
+      lastFallT = now;
     }
 
-    // Gravity
-    if (now - lastFallT > FALL_MS) {
-      applyGravity();
-      lastFallT = now;
+    // ── Animate falling block meshes (frame-rate independent lerp) ────────
+    const lerpK = 1 - Math.exp(-22 * dt); // ~95% complete in ≈130 ms
+    for (let i = fallingMeshes.length - 1; i >= 0; i--) {
+      const fm = fallingMeshes[i];
+      fm.mesh.position.y += (fm.targetY - fm.mesh.position.y) * lerpK;
+      if (Math.abs(fm.mesh.position.y - fm.targetY) < 0.015) {
+        fm.mesh.position.y = fm.targetY;
+        fallingMeshes.splice(i, 1);
+      }
     }
 
     // Smooth player visual position
