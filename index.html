@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D 미스터 드릴러</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; font-family:Arial,sans-serif; user-select:none; }
+
+#ui {
+  position:fixed; top:15px; left:15px;
+  background:rgba(0,0,0,0.68);
+  border:2px solid rgba(255,255,255,0.2);
+  border-radius:14px; padding:14px 18px;
+  color:white; pointer-events:none; min-width:210px;
+  backdrop-filter:blur(4px);
+}
+.o2-label { font-size:13px; color:#aaddff; margin-bottom:5px; }
+#o2bar { width:180px; height:18px; background:#222; border-radius:9px; overflow:hidden; border:1px solid #444; }
+#o2fill { height:100%; width:100%; border-radius:9px; transition:width 0.15s; }
+#depth-info { margin-top:10px; font-size:19px; color:#ffd700; font-weight:bold; }
+#score-info { font-size:24px; color:#ffe055; font-weight:bold; }
+
+.combo-popup {
+  position:fixed; pointer-events:none;
+  font-size:38px; font-weight:bold;
+  text-shadow:2px 2px 0 #000, 0 0 24px currentColor;
+  animation: floatup 0.95s ease-out forwards;
+  left:50%; top:36%; transform:translateX(-50%);
+  white-space:nowrap; z-index:50;
+}
+@keyframes floatup {
+  0%   { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
+  40%  { transform:translateX(-50%) translateY(-24px) scale(1.18); }
+  100% { opacity:0; transform:translateX(-50%) translateY(-80px) scale(0.85); }
+}
+
+.screen {
+  position:fixed; inset:0;
+  background:rgba(0,5,28,0.93);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  color:white; z-index:100;
+}
+.screen h1 {
+  font-size:68px; letter-spacing:5px;
+  background:linear-gradient(180deg,#fff 0%,#ffd700 45%,#ff8800 100%);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  filter:drop-shadow(0 0 24px #ffd70099);
+  margin-bottom:6px;
+}
+.sub { font-size:20px; color:#8899cc; margin-bottom:26px; }
+.info-box {
+  background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.13);
+  border-radius:14px; padding:16px 36px;
+  font-size:15px; line-height:2.3; color:#ccd;
+  margin-bottom:30px;
+}
+.info-box b { color:#ffd700; }
+.dot {
+  display:inline-block; width:14px; height:14px;
+  border-radius:3px; margin-right:6px; vertical-align:middle;
+}
+.btn {
+  padding:15px 52px; font-size:22px; font-weight:bold;
+  background:linear-gradient(135deg,#ffd700,#ff6600);
+  border:none; border-radius:50px; cursor:pointer;
+  color:#000; box-shadow:0 4px 28px rgba(255,160,0,0.55);
+  transition:transform 0.1s, box-shadow 0.1s;
+}
+.btn:hover { transform:scale(1.07); box-shadow:0 6px 36px rgba(255,160,0,0.85); }
+
+#go-panel { text-align:center; }
+#go-depth { font-size:22px; color:#aaddff; margin:12px 0 4px; }
+#go-score { font-size:44px; color:#ffd700; font-weight:bold; margin-bottom:32px; }
+
+#hint {
+  position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+  color:rgba(255,255,255,0.4); font-size:13px; pointer-events:none;
+  white-space:nowrap; background:rgba(0,0,0,0.4);
+  padding:6px 16px; border-radius:20px;
+}
+</style>
+</head>
+<body>
+
+<!-- HUD -->
+<div id="ui">
+  <div class="o2-label">🫧 산소</div>
+  <div id="o2bar"><div id="o2fill"></div></div>
+  <div id="depth-info">깊이: 0m</div>
+  <div id="score-info">0점</div>
+</div>
+
+<!-- Start screen -->
+<div id="start-screen" class="screen">
+  <h1>3D DRILLER</h1>
+  <div class="sub">미스터 드릴러 3D</div>
+  <div class="info-box">
+    <b>WASD</b> 또는 <b>방향키</b> : 수평 이동 &amp; 드릴링<br>
+    <b>Space</b> 또는 <b>Z</b> : 아래로 드릴링<br>
+    <b>Q / E</b> : 카메라 90° 회전<br>
+    <span class="dot" style="background:#ee3333"></span><span class="dot" style="background:#2288ee"></span><span class="dot" style="background:#22cc44"></span><span class="dot" style="background:#eecc22"></span><span class="dot" style="background:#bb33ee"></span>
+    같은 색 블록이 연결되면 <b>연쇄 폭발 보너스!</b><br>
+    <span class="dot" style="background:#fff;border:1px solid #aaa"></span> <b>흰색 블록</b> = 산소 보충 💨
+  </div>
+  <button class="btn" id="start-btn">게임 시작!</button>
+</div>
+
+<!-- Game over screen -->
+<div id="gameover-screen" class="screen" style="display:none">
+  <h1>GAME OVER</h1>
+  <div id="go-panel">
+    <div id="go-depth"></div>
+    <div id="go-score"></div>
+    <button class="btn" id="retry-btn">다시 시작!</button>
+  </div>
+</div>
+
+<!-- Controls hint -->
+<div id="hint">WASD / 방향키: 이동 | Space / Z: 아래 드릴 | Q / E: 카메라 회전</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+
+// ── Constants ─────────────────────────────────────────────────────────────
+const W = 13, H = 64, D = 13;   // world grid size
+const EMPTY = 0, AIR_PACK = 6, WALL = 7;
+
+const COLOR_HEX = {
+  1: 0xee3333,  // red
+  2: 0x2288ee,  // blue
+  3: 0x22cc44,  // green
+  4: 0xeecc22,  // yellow
+  5: 0xbb33ee,  // purple
+  6: 0xffffff,  // white (air)
+  7: 0x445566,  // wall (indestructible)
+};
+
+const O2_MAX    = 100;
+const O2_DRAIN  = 2.5;   // per second
+const O2_BOOST  = 38;    // from air pack
+const MOVE_MS   = 145;   // min ms between player moves
+const FALL_MS   = 110;   // gravity tick
+
+// ── Three.js core ─────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = false;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x00091a);
+scene.fog = new THREE.Fog(0x00091a, 14, 30);
+
+const cam = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 80);
+
+// Lights
+scene.add(new THREE.AmbientLight(0xaabbdd, 0.6));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.position.set(8, 14, 6);
+scene.add(sun);
+const torch = new THREE.PointLight(0xffcc77, 3, 15);
+scene.add(torch);
+
+// Shared geometry
+const BLOCK_GEO = new THREE.BoxGeometry(0.88, 0.88, 0.88);
+const PLAYER_GEO = new THREE.BoxGeometry(0.72, 0.72, 0.72);
+const PLAYER_MAT = new THREE.MeshLambertMaterial({ color: 0xff8800, emissive: 0x662200 });
+
+// Block materials
+const BMATS = {};
+for (const [t, c] of Object.entries(COLOR_HEX)) {
+  BMATS[t] = new THREE.MeshLambertMaterial({
+    color: c,
+    emissive: new THREE.Color(c).multiplyScalar(t == 7 ? 0.02 : 0.09),
+  });
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let world  = [];
+let meshes = [];
+let playerMesh = null;
+let gameActive = false;
+let camAngle = 0;            // degrees (multiples of 90)
+let lastMoveT = 0;
+let lastFallT = 0;
+let breaking  = [];          // [{mesh, t}]
+
+// Smooth camera
+const camPos    = new THREE.Vector3();
+const camTarget = new THREE.Vector3();
+
+// Player visual lerp
+const vPos = new THREE.Vector3();
+const tPos = new THREE.Vector3();
+
+// Player data
+let p = {};
+function resetPlayer() {
+  p = {
+    x: Math.floor(W / 2),
+    y: 0,
+    z: Math.floor(D / 2),
+    o2: O2_MAX,
+    score: 0,
+    depth: 0,
+  };
+}
+
+// ── Coordinate helpers ────────────────────────────────────────────────────
+function g2w(x, y, z) {
+  // Grid (integer) → Three.js world coords
+  return new THREE.Vector3(x - W / 2, -y, z - D / 2);
+}
+
+function valid(x, y, z) {
+  return x >= 0 && x < W && y >= 0 && y < H && z >= 0 && z < D;
+}
+
+function getBlock(x, y, z) {
+  if (!valid(x, y, z)) return -1;
+  return world[x][y][z];
+}
+
+// ── World generation ──────────────────────────────────────────────────────
+function generateWorld() {
+  // Remove old block meshes
+  for (let i = scene.children.length - 1; i >= 0; i--) {
+    if (scene.children[i].userData.isBlock) scene.remove(scene.children[i]);
+  }
+  breaking = [];
+
+  world  = [];
+  meshes = [];
+
+  for (let x = 0; x < W; x++) {
+    world[x] = []; meshes[x] = [];
+    for (let y = 0; y < H; y++) {
+      world[x][y] = []; meshes[x][y] = [];
+      for (let z = 0; z < D; z++) {
+        let t = EMPTY;
+        const border = (x === 0 || x === W-1 || z === 0 || z === D-1);
+
+        if (y >= 2) {
+          if (border) {
+            t = WALL;
+          } else if (Math.random() < 0.07) {
+            t = AIR_PACK;
+          } else {
+            // Cluster colors in 3×4×3 zones for big chains
+            const cx = Math.floor(x / 3);
+            const cy = Math.floor(y / 4);
+            const cz = Math.floor(z / 3);
+            const base = ((cx * 7 + cy * 13 + cz * 5) % 5) + 1;
+            t = Math.random() < 0.58 ? base : ((Math.floor(Math.random() * 5)) + 1);
+          }
+        } else if (border) {
+          t = WALL;
+        }
+
+        world[x][y][z] = t;
+        meshes[x][y][z] = null;
+        if (t !== EMPTY) spawnMesh(x, y, z, t);
+      }
+    }
+  }
+}
+
+function spawnMesh(x, y, z, type) {
+  const m = new THREE.Mesh(BLOCK_GEO, BMATS[type]);
+  m.position.copy(g2w(x, y, z));
+  m.userData.isBlock = true;
+  scene.add(m);
+  meshes[x][y][z] = m;
+  return m;
+}
+
+function killMesh(x, y, z) {
+  const m = meshes[x][y][z];
+  if (!m) return;
+  meshes[x][y][z] = null;
+  breaking.push({ mesh: m, t: 0 });
+}
+
+// ── Block breaking + chain reaction ──────────────────────────────────────
+function breakAt(x, y, z) {
+  const type = getBlock(x, y, z);
+  if (type <= 0 || type === WALL) return 0;
+
+  if (type === AIR_PACK) {
+    world[x][y][z] = EMPTY;
+    killMesh(x, y, z);
+    p.o2 = Math.min(O2_MAX, p.o2 + O2_BOOST);
+    popup('💨 산소 +' + O2_BOOST + '%', '#aaddff');
+    return 1;
+  }
+
+  // BFS – find all connected same-colour blocks
+  const group = [];
+  const vis   = new Set();
+  const queue = [[x, y, z]];
+
+  while (queue.length) {
+    const [cx, cy, cz] = queue.shift();
+    const key = cx + '|' + cy + '|' + cz;
+    if (vis.has(key)) continue;
+    if (!valid(cx, cy, cz)) continue;
+    if (world[cx][cy][cz] !== type) continue;
+    vis.add(key);
+    group.push([cx, cy, cz]);
+    queue.push(
+      [cx+1, cy, cz], [cx-1, cy, cz],
+      [cx, cy+1, cz], [cx, cy-1, cz],
+      [cx, cy, cz+1], [cx, cy, cz-1]
+    );
+  }
+
+  for (const [bx, by, bz] of group) {
+    world[bx][by][bz] = EMPTY;
+    killMesh(bx, by, bz);
+  }
+
+  const chain    = group.length;
+  const depthMul = Math.floor(p.y / 6) + 1;
+  const pts      = chain * chain * 10 * depthMul;
+  p.score += pts;
+
+  if (chain > 1) {
+    popup(`COMBO ×${chain}！  +${pts.toLocaleString()}점`, '#ffd700');
+  } else {
+    p.score += depthMul; // tiny bonus even for single blocks
+  }
+  return chain;
+}
+
+// ── Combo popup ───────────────────────────────────────────────────────────
+function popup(text, color) {
+  const el = document.createElement('div');
+  el.className = 'combo-popup';
+  el.style.color = color;
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 960);
+}
+
+// ── Movement direction helpers ────────────────────────────────────────────
+function getFwd() {
+  const r = camAngle * Math.PI / 180;
+  return { x: Math.round(Math.sin(r)), z: Math.round(Math.cos(r)) };
+}
+function getRight() {
+  const r = (camAngle + 90) * Math.PI / 180;
+  return { x: Math.round(Math.sin(r)), z: Math.round(Math.cos(r)) };
+}
+
+function moveDelta(key) {
+  const f = getFwd(), r = getRight();
+  const map = {
+    'w':          [ f.x,  0,  f.z],
+    'arrowup':    [ f.x,  0,  f.z],
+    's':          [-f.x,  0, -f.z],
+    'arrowdown':  [-f.x,  0, -f.z],
+    'a':          [-r.x,  0, -r.z],
+    'arrowleft':  [-r.x,  0, -r.z],
+    'd':          [ r.x,  0,  r.z],
+    'arrowright': [ r.x,  0,  r.z],
+    ' ':          [0,  1, 0],
+    'z':          [0,  1, 0],
+  };
+  return map[key];
+}
+
+// ── Player move / gravity ─────────────────────────────────────────────────
+function tryMove(dx, dy, dz) {
+  const nx = p.x + dx, ny = p.y + dy, nz = p.z + dz;
+  if (!valid(nx, ny, nz)) return false;
+  const t = world[nx][ny][nz];
+  if (t === WALL) return false;
+  if (t !== EMPTY) breakAt(nx, ny, nz);
+  p.x = nx; p.y = ny; p.z = nz;
+  p.depth = Math.max(p.depth, p.y);
+  return true;
+}
+
+function applyGravity() {
+  const ny = p.y + 1;
+  if (!valid(p.x, ny, p.z)) return;
+  if (world[p.x][ny][p.z] !== EMPTY) return; // blocked below
+  p.y = ny;
+  p.depth = Math.max(p.depth, p.y);
+}
+
+// ── Input ─────────────────────────────────────────────────────────────────
+const keys = {};
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (!gameActive) return;
+  if (k === 'q') { camAngle -= 90; e.preventDefault(); }
+  if (k === 'e') { camAngle += 90; e.preventDefault(); }
+  if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// ── UI ────────────────────────────────────────────────────────────────────
+function updateUI() {
+  const pct = p.o2 / O2_MAX;
+  const fill = document.getElementById('o2fill');
+  fill.style.width = (pct * 100).toFixed(1) + '%';
+  fill.style.background =
+    pct > 0.5  ? '#22cc66' :
+    pct > 0.25 ? '#ffaa00' : '#ee2222';
+  document.getElementById('depth-info').textContent = `깊이: ${p.depth * 2}m`;
+  document.getElementById('score-info').textContent = p.score.toLocaleString() + '점';
+}
+
+// ── Camera ────────────────────────────────────────────────────────────────
+function updateCamera(alpha) {
+  const r   = camAngle * Math.PI / 180;
+  const dist = 10, rise = 6;
+  const wp  = g2w(p.x, p.y, p.z);
+
+  const ideal = new THREE.Vector3(
+    wp.x - Math.sin(r) * dist,
+    wp.y + rise,
+    wp.z - Math.cos(r) * dist
+  );
+  camPos.lerp(ideal, alpha);
+  camTarget.lerp(wp, alpha * 1.2);
+
+  cam.position.copy(camPos);
+  cam.lookAt(camTarget);
+  torch.position.set(wp.x, wp.y + 1.2, wp.z);
+}
+
+// ── Game flow ─────────────────────────────────────────────────────────────
+function startGame() {
+  document.getElementById('start-screen').style.display   = 'none';
+  document.getElementById('gameover-screen').style.display = 'none';
+
+  if (playerMesh) scene.remove(playerMesh);
+  playerMesh = new THREE.Mesh(PLAYER_GEO, PLAYER_MAT);
+  scene.add(playerMesh);
+
+  resetPlayer();
+  camAngle = 0;
+  generateWorld();
+
+  const sp = g2w(p.x, p.y, p.z);
+  vPos.copy(sp); tPos.copy(sp);
+  camPos.set(sp.x, sp.y + 6, sp.z - 10);
+  camTarget.copy(sp);
+
+  lastMoveT = lastFallT = Date.now();
+  gameActive = true;
+}
+
+function gameOver() {
+  gameActive = false;
+  document.getElementById('go-depth').textContent = `최대 깊이: ${p.depth * 2}m`;
+  document.getElementById('go-score').textContent = p.score.toLocaleString() + '점';
+  document.getElementById('gameover-screen').style.display = 'flex';
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('retry-btn').addEventListener('click', startGame);
+
+// ── Resize ────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  cam.aspect = innerWidth / innerHeight;
+  cam.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── Main loop ─────────────────────────────────────────────────────────────
+const clock = new THREE.Clock();
+
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt  = Math.min(clock.getDelta(), 0.1);
+  const now = Date.now();
+
+  if (gameActive) {
+    // Oxygen drain
+    p.o2 -= O2_DRAIN * dt;
+    if (p.o2 <= 0) { p.o2 = 0; gameOver(); }
+
+    // Player input → move
+    if (now - lastMoveT > MOVE_MS) {
+      const MOVE_KEYS = ['w','arrowup','s','arrowdown','a','arrowleft','d','arrowright',' ','z'];
+      for (const k of MOVE_KEYS) {
+        if (keys[k]) {
+          const d = moveDelta(k);
+          if (d && tryMove(...d)) { lastMoveT = now; break; }
+        }
+      }
+    }
+
+    // Gravity
+    if (now - lastFallT > FALL_MS) {
+      applyGravity();
+      lastFallT = now;
+    }
+
+    // Smooth player visual position
+    tPos.copy(g2w(p.x, p.y, p.z));
+    vPos.lerp(tPos, 0.22);
+    playerMesh.position.copy(vPos);
+
+    // Block-break shrink animation
+    for (let i = breaking.length - 1; i >= 0; i--) {
+      const b = breaking[i];
+      b.t += dt;
+      const s = Math.max(0, 1 - b.t / 0.17);
+      b.mesh.scale.setScalar(s);
+      if (s <= 0) { scene.remove(b.mesh); breaking.splice(i, 1); }
+    }
+
+    updateUI();
+  }
+
+  updateCamera(0.11);
+  renderer.render(scene, cam);
+})();
+</script>
+</body>
+</html>
