@@ -1,0 +1,262 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WFC Infinite Shmup Background</title>
+
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; height: 100%;
+    background: #05060c;
+    display: flex; align-items: center; justify-content: center;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #9fb3c8;
+    overflow: hidden;
+  }
+  #wrap { position: relative; height: 100vh; aspect-ratio: 640 / 800; max-width: 100vw; }
+  canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+  #hud {
+    position: absolute; left: 8px; top: 8px; pointer-events: none;
+    text-shadow: 0 1px 2px #000; white-space: pre; font-size: 11px;
+  }
+  #help {
+    position: absolute; left: 8px; bottom: 8px; pointer-events: none;
+    text-shadow: 0 1px 2px #000; opacity: .55; font-size: 11px;
+  }
+</style>
+
+<div id="wrap">
+  <canvas id="c" width="640" height="800"></canvas>
+  <div id="hud"></div>
+  <div id="help">↑↓←→ / WASD 이동   SPACE 발사   D 디버그   R 시드변경   [ ] 속도</div>
+</div>
+
+<script type="module">
+"use strict";
+
+// WFC 코어는 wfc.js 와 공유한다 (3D 버전 index3d.html 도 같은 모듈을 쓴다).
+import { hash2, TS, InfiniteWFC, mulberry32, nearDensity, farDensity } from './wfc.js';
+
+/* ══════════════════════════════════════════════════════════════════════════
+   5. 렌더링 — 풀이와 완전히 분리. 보이는 행만 즉석에서 그린다.
+      (논문은 collapse 즉시 Instantiate 했지만 무한 맵에서는 불가능)
+   ══════════════════════════════════════════════════════════════════════════ */
+function cellPath(ctx, px, py, s, pos) {
+  const R = Math.max(3, s * 0.34);
+  const tl = pos === 'UL' ? R : 0, tr = pos === 'UR' ? R : 0;
+  const bl = pos === 'DL' ? R : 0, br = pos === 'DR' ? R : 0;
+  ctx.beginPath();
+  ctx.moveTo(px + tl, py);
+  ctx.lineTo(px + s - tr, py);      if (tr) ctx.quadraticCurveTo(px + s, py, px + s, py + tr);
+  ctx.lineTo(px + s, py + s - br);  if (br) ctx.quadraticCurveTo(px + s, py + s, px + s - br, py + s);
+  ctx.lineTo(px + bl, py + s);      if (bl) ctx.quadraticCurveTo(px, py + s, px, py + s - bl);
+  ctx.lineTo(px, py + tl);          if (tl) ctx.quadraticCurveTo(px, py, px + tl, py);
+  ctx.closePath();
+}
+
+function drawTile(ctx, t, px, py, s, wx, wy, pal) {
+  const m = TS.meta[t];
+  if (m.kind === 'void') return;
+  const pos = m.pos, up = pos[0] === 'U', dn = pos[0] === 'D';
+  const lf = pos[1] === 'L', rt = pos[1] === 'R';
+
+  if (m.kind === 'rock') {
+    cellPath(ctx, px, py, s, pos);
+    ctx.fillStyle = pal.rock;
+    ctx.fill();
+    // 바깥쪽 면에 림라이트
+    ctx.save(); ctx.clip();
+    ctx.fillStyle = pal.rockLit;
+    const e = Math.max(2, s * 0.16);
+    if (up) ctx.fillRect(px, py, s, e);
+    if (lf) ctx.fillRect(px, py, e, s);
+    ctx.fillStyle = pal.rockDark;
+    if (dn) ctx.fillRect(px, py + s - e, s, e);
+    if (rt) ctx.fillRect(px + s - e, py, e, s);
+    // 결정론적 표면 노이즈
+    const h = hash2(wx, wy);
+    ctx.fillStyle = pal.rockSpec;
+    for (let k = 0; k < 3; k++) {
+      const a = (h >>> (k * 7)) & 0xff, b = (h >>> (k * 5 + 3)) & 0xff;
+      ctx.fillRect(px + (a / 255) * (s - 3), py + (b / 255) * (s - 3), 2, 2);
+    }
+    ctx.restore();
+  } else {
+    // 스테이션 링: 금속 패널 + 창문 불빛
+    cellPath(ctx, px, py, s, pos);
+    ctx.fillStyle = pal.stn;
+    ctx.fill();
+    ctx.save(); ctx.clip();
+    const e = Math.max(2, s * 0.18);
+    ctx.fillStyle = pal.stnLit;
+    if (up) ctx.fillRect(px, py, s, e);
+    if (lf) ctx.fillRect(px, py, e, s);
+    ctx.fillStyle = pal.stnDark;
+    if (dn) ctx.fillRect(px, py + s - e, s, e);
+    if (rt) ctx.fillRect(px + s - e, py, e, s);
+    if (pos === 'UM' || pos === 'DM' || pos === 'ML' || pos === 'MR') {
+      ctx.fillStyle = pal.stnGlow;
+      const q = s * 0.22;
+      ctx.fillRect(px + s / 2 - q / 2, py + s / 2 - q / 2, q, q);
+    }
+    ctx.restore();
+  }
+}
+
+function drawLayer(ctx, wfc, tile, camPx, canvasH, pal, alpha) {
+  const first = Math.max(0, Math.floor(camPx / tile) - 1);
+  const last  = first + Math.ceil(canvasH / tile) + 2;
+  wfc.row(last);                       // 필요한 만큼 앞서 생성
+  wfc.prune(first - 4);                // 지나간 행 해제
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  for (let y = first; y <= last; y++) {
+    const row = wfc.row(y);
+    const py = canvasH - (y * tile - camPx) - tile;
+    if (py > canvasH || py < -tile) continue;
+    for (let x = 0; x < wfc.W; x++) {
+      const t = row[x];
+      if (t !== 0) drawTile(ctx, t, x * tile, py, tile, x, y, pal);
+    }
+  }
+  ctx.restore();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6. 데모 게임 루프
+   ══════════════════════════════════════════════════════════════════════════ */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const HUD = document.getElementById('hud');
+const CW = cv.width, CH = cv.height;
+
+const NEAR_TILE = 32, FAR_TILE = 16, PARALLAX = 0.35;
+
+let seed, near, far, stars;
+function reset(s) {
+  seed = s >>> 0;
+  near = new InfiniteWFC(CW / NEAR_TILE, seed,          { density: nearDensity });
+  far  = new InfiniteWFC(CW / FAR_TILE,  seed ^ 0x9e37, { density: farDensity, bandH: 14, commitH: 7 });
+  const r = mulberry32(seed ^ 0x51ed);
+  stars = Array.from({ length: 220 }, () => ({
+    x: r() * CW, y: r() * CH, z: 0.2 + r() * 0.8, s: r() < 0.85 ? 1 : 2
+  }));
+}
+reset((Math.random() * 1e9) | 0);
+
+const PAL_NEAR = { rock:'#3b4a63', rockLit:'#5f7492', rockDark:'#232d3f', rockSpec:'#7d92b5',
+                   stn:'#2c5a5c', stnLit:'#54a7a4', stnDark:'#1b3a3c', stnGlow:'#8ff0e4' };
+const PAL_FAR  = { rock:'#1e2740', rockLit:'#2c3a5c', rockDark:'#161d31', rockSpec:'#39466b',
+                   stn:'#1b3540', stnLit:'#2b5566', stnDark:'#132630', stnGlow:'#3f7d84' };
+
+let camPx = 0, speed = 190, paused = false, debug = false;
+const ship = { x: CW / 2, y: CH - 120, vx: 0, vy: 0 };
+const bullets = [];
+const keys = new Set();
+
+addEventListener('keydown', e => {
+  keys.add(e.code);
+  if (e.code === 'KeyD') debug = !debug;
+  if (e.code === 'KeyR') { reset((Math.random() * 1e9) | 0); camPx = 0; }
+  if (e.code === 'BracketRight') speed = Math.min(900, speed * 1.25);
+  if (e.code === 'BracketLeft')  speed = Math.max(20, speed / 1.25);
+  if (e.code === 'KeyP') paused = !paused;
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+});
+addEventListener('keyup', e => keys.delete(e.code));
+
+let shootCd = 0;
+function update(dt) {
+  camPx += speed * dt;
+
+  const ax = (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
+  const ay = (keys.has('ArrowDown')  || keys.has('KeyS') ? 1 : 0) - (keys.has('ArrowUp')   || keys.has('KeyW') ? 1 : 0);
+  ship.vx += ax * 2600 * dt; ship.vy += ay * 2600 * dt;
+  ship.vx *= Math.pow(0.0016, dt); ship.vy *= Math.pow(0.0016, dt);
+  ship.x = Math.max(14, Math.min(CW - 14, ship.x + ship.vx * dt));
+  ship.y = Math.max(40, Math.min(CH - 30, ship.y + ship.vy * dt));
+
+  shootCd -= dt;
+  if (keys.has('Space') && shootCd <= 0) { bullets.push({ x: ship.x, y: ship.y - 16 }); shootCd = 0.085; }
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    bullets[i].y -= 900 * dt;
+    if (bullets[i].y < -10) bullets.splice(i, 1);
+  }
+
+  for (const st of stars) {
+    st.y += speed * st.z * 0.22 * dt;
+    if (st.y > CH) { st.y -= CH; st.x = Math.random() * CW; }
+  }
+}
+
+function drawDebug() {
+  const tile = NEAR_TILE;
+  const first = Math.floor(camPx / tile);
+  // 커밋 경계선
+  ctx.save();
+  ctx.strokeStyle = '#ff5f8f'; ctx.lineWidth = 1; ctx.setLineDash([5, 5]);
+  const py = CH - (near.top * tile - camPx) - tile;
+  ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(CW, py); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#ff5f8f';
+  ctx.font = '10px monospace';
+  ctx.fillText('commit frontier  y=' + near.top, 6, py - 5);
+  // 타일 그리드 + 위치코드
+  ctx.globalAlpha = 0.85;
+  ctx.font = '8px monospace';
+  for (let y = first; y < first + Math.ceil(CH / tile) + 1; y++) {
+    const row = near.rows.get(y); if (!row) continue;
+    const ty = CH - (y * tile - camPx) - tile;
+    for (let x = 0; x < near.W; x++) {
+      const m = TS.meta[row[x]];
+      if (m.kind === 'void') continue;
+      ctx.fillStyle = m.kind === 'rock' ? '#ffd479' : '#7ff0ff';
+      ctx.fillText(m.pos, x * tile + 8, ty + 20);
+    }
+  }
+  ctx.restore();
+}
+
+function render() {
+  ctx.fillStyle = '#05070f';
+  ctx.fillRect(0, 0, CW, CH);
+
+  for (const st of stars) {
+    ctx.fillStyle = `rgba(150,180,220,${0.15 + st.z * 0.5})`;
+    ctx.fillRect(st.x | 0, st.y | 0, st.s, st.s);
+  }
+
+  drawLayer(ctx, far,  FAR_TILE,  camPx * PARALLAX, CH, PAL_FAR,  0.75);
+  drawLayer(ctx, near, NEAR_TILE, camPx,            CH, PAL_NEAR, 1);
+
+  ctx.fillStyle = '#7ff0ff';
+  for (const b of bullets) ctx.fillRect(b.x - 1.5, b.y, 3, 12);
+
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  ctx.fillStyle = '#e8f4ff';
+  ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(11, 12); ctx.lineTo(0, 6); ctx.lineTo(-11, 12); ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#ff9d4d';
+  ctx.fillRect(-3, 8, 6, 6 + Math.random() * 7);
+  ctx.restore();
+
+  if (debug) drawDebug();
+
+  const s = near.stats, f = far.stats;
+  HUD.textContent =
+    `seed ${seed}   y ${(camPx / NEAR_TILE).toFixed(0)}   speed ${speed | 0}px/s\n` +
+    `near  band ${s.lastMs.toFixed(2)}ms  avg ${s.avgMs.toFixed(2)}ms  x${s.bands}\n` +
+    `far   band ${f.lastMs.toFixed(2)}ms  avg ${f.avgMs.toFixed(2)}ms  x${f.bands}\n` +
+    `retry ${s.retries + f.retries}   seam ${s.seams + f.seams}   rows ${near.rows.size + far.rows.size}\n` +
+    `density ${nearDensity(camPx / NEAR_TILE).toFixed(2)}`;
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!paused) update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
