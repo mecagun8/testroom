@@ -8,27 +8,29 @@ Soni Seli, *"Procedural Generation using Wave Function Collapse Algorithm"*
 
 ```
 파일 구성
-  wfc.js         WFC 코어 (렌더러 비의존) — 아래 두 뷰가 공유
-  index.html     2D 캔버스 뷰
-  index3d.html   3D Three.js 뷰
-  vendor/        three.js 0.185 (MIT), 오프라인 실행용으로 동봉
+  wfc.js       WFC 코어 (렌더러 비의존) — 아래 두 뷰가 공유
+  index.html   3D Three.js 뷰  ← GitHub Pages 기본 진입점
+  2d.html      2D 캔버스 뷰
+  vendor/      three.js 0.185 (MIT), 오프라인 실행용으로 동봉
 ```
 
 ## 실행
 
-ES 모듈을 쓰기 때문에 `file://` 로는 열리지 않습니다(브라우저 CORS 정책).
-정적 서버 아무거나 하나 띄우면 됩니다.
+**GitHub Pages** 로 열면 그대로 돌아갑니다. 저장소 Settings → Pages 에서
+Source 를 기본 브랜치의 `/ (root)` 로 지정하면 됩니다.
+
+로컬에서 볼 때는 정적 서버가 하나 필요합니다. ES 모듈과 three.js(ESM 전용)를
+쓰기 때문에 `file://` 로는 열리지 않습니다(브라우저 CORS 정책).
 
 ```bash
-cd wfc-shmup && python3 -m http.server 8899
-# http://localhost:8899/index.html     2D
-# http://localhost:8899/index3d.html   3D
+python3 -m http.server 8899
+# http://localhost:8899/         3D
+# http://localhost:8899/2d.html  2D
 ```
 
-**2D** — `↑↓←→`/`WASD` 이동, `SPACE` 발사, `D` 디버그(타일 위치코드 + 커밋 경계),
-`R` 시드 변경, `[` `]` 속도, `P` 정지
-
-**3D** — 위와 동일 + `C` 카메라 전환(추격 / 탑다운 / 로우앵글)
+**공통** — `↑↓←→`/`WASD` 이동, `SPACE` 발사, `R` 시드 변경, `[` `]` 속도, `P` 정지
+**2D 전용** — `D` 디버그 (타일 위치코드 + 커밋 경계 표시)
+**3D 전용** — `C` 카메라 전환 (추격 / 탑다운 / 로우앵글)
 
 ---
 
@@ -162,7 +164,7 @@ cd wfc-shmup && python3 -m http.server 8899
 
 ---
 
-## 3D 뷰 (`index3d.html`)
+## 3D 뷰 (`index.html`)
 
 솔버는 **한 줄도 바뀌지 않습니다.** WFC 데이터가 유일한 진실이고 3D는 순수한
 표현 계층입니다. 2D에서 정한 원칙(풀이와 렌더 분리)이 3D에서 더 중요해집니다.
