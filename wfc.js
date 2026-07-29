@@ -1,7 +1,7 @@
 /**
  * WFC 무한 스크롤 생성기 — 코어 (렌더러 비의존)
  *
- * 2D 캔버스 버전(index.html)과 3D Three.js 버전(index3d.html)이 공유한다.
+ * 3D 버전(index.html)과 2D 캔버스 버전(2d.html)이 공유한다.
  * 이론적 배경과 논문과의 차이는 README.md 참조.
  */
 
