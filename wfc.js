@@ -163,7 +163,14 @@ class InfiniteWFC {
     this.rows.set(0, new Int8Array(this.W));  // y=0 은 전부 V (조용한 시작)
     this.top = 0;
     this.stats = { bands: 0, retries: 0, seams: 0, lastMs: 0, avgMs: 0 };
+
+    // 시각화용 추적. null 이면 기록하지 않는다 → 평상시 비용은 분기 하나뿐.
+    this.trace = null;
+    this._traceCb = null;
   }
+
+  /** 다음에 푸는 밴드 하나의 연산 과정을 기록해서 콜백으로 넘긴다. (1회성) */
+  captureNextBand(cb) { this._traceCb = cb; }
 
   /** y행을 얻는다. 없으면 거기까지 생성. */
   row(y) {
@@ -182,6 +189,8 @@ class InfiniteWFC {
   _grow() {
     const t0 = performance.now();
     const anchor = this.rows.get(this.top);
+    const cb = this._traceCb;
+    if (cb) { this._traceCb = null; this.trace = []; }
 
     // ── 방어 1: 시드를 바꿔가며 재시도 (밴드가 작아서 매우 저렴)
     let sol = null;
@@ -189,6 +198,8 @@ class InfiniteWFC {
       if (a) this.stats.retries++;
       sol = this._solve(anchor, mulberry32(hash2(this.seed, this.top * 131 + a)));
     }
+
+    if (cb) { const tr = this.trace; this.trace = null; cb(tr); }
 
     if (sol) {
       for (let r = 1; r <= this.commitH; r++) this.rows.set(this.top + r, sol[r]);
@@ -213,6 +224,9 @@ class InfiniteWFC {
     const dom = new Int32Array(W * H).fill(TS.FULL);
     for (let x = 0; x < W; x++) dom[x] = 1 << anchor[x];   // 앵커 행은 동결
 
+    const tr = this.trace;
+    if (tr) tr.push({ k: 'init', W, H, top: this.top, dom: Int32Array.from(dom) });
+
     // 초기 전파: 앵커 + 좌우 경계(맵 밖 = V)의 제약을 전체에 퍼뜨린다.
     // 논문의 boundary handling 을 명시적 제약으로 바꾼 것 —
     // "폭 안에 못 들어가는 구조물"을 사후 모순이 아니라 사전에 제거한다.
@@ -225,16 +239,18 @@ class InfiniteWFC {
       let bestC = 99, ties = [];
       for (let i = W; i < W * H; i++) {
         const c = popcount(dom[i]);
-        if (c === 0) return null;             // 모순
+        if (c === 0) { if (tr) tr.push({ k: 'fail', i }); return null; }   // 모순
         if (c === 1) continue;
         if (c < bestC) { bestC = c; ties.length = 0; ties.push(i); }
         else if (c === bestC) ties.push(i);
       }
-      if (ties.length === 0) break;           // 전부 확정 → 성공
+      if (ties.length === 0) { if (tr) tr.push({ k: 'done' }); break; }  // 전부 확정 → 성공
 
       const i = ties[(rnd() * ties.length) | 0];
       const worldY = this.top + ((i / W) | 0);
-      dom[i] = 1 << this._pick(dom[i], worldY, rnd);
+      const chosen = this._pick(dom[i], worldY, rnd);
+      if (tr) tr.push({ k: 'observe', i, mask: dom[i], chosen, ties: ties.length, entropy: bestC });
+      dom[i] = 1 << chosen;
       // 붕괴 결과는 "이웃"을 스택에 넣어야 퍼진다. 자기 자신을 넣으면
       // 이미 확정된 도메인이라 변화가 감지되지 않아 전파가 죽는다.
       const st = [];
@@ -268,6 +284,7 @@ class InfiniteWFC {
   /** 스택 기반 제약 전파 (논문의 Propagate + GetPossibleTilesFromNeighbors). */
   _propagate(dom, stack, H) {
     const W = this.W;
+    const tr = this.trace;
     while (stack.length) {
       const i = stack.pop();
       const r = (i / W) | 0;
@@ -283,8 +300,11 @@ class InfiniteWFC {
       d &= unionOf(x > 0     ? dom[i - 1] : TS.VMASK, TS.RIGHT);
       d &= unionOf(x < W - 1 ? dom[i + 1] : TS.VMASK, TS.LEFT);
 
-      if (d === 0) return false;
-      if (d !== dom[i]) { dom[i] = d; this._pushNeighbors(stack, i, H); }
+      if (d === 0) { if (tr) tr.push({ k: 'fail', i }); return false; }
+      if (d !== dom[i]) {
+        if (tr) tr.push({ k: 'prop', i, from: dom[i], to: d });
+        dom[i] = d; this._pushNeighbors(stack, i, H);
+      }
     }
     return true;
   }
