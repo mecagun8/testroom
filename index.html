@@ -1,32 +1,114 @@
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 fill=%27%2305070f%27/%3E%3Crect x=%271%27 y=%279%27 width=%275%27 height=%275%27 fill=%27%235f7492%27/%3E%3Crect x=%278%27 y=%272%27 width=%276%27 height=%276%27 fill=%27%2354a7a4%27/%3E%3Crect x=%2710%27 y=%274%27 width=%272%27 height=%272%27 fill=%27%2305070f%27/%3E%3C/svg%3E">
 <title>WFC Infinite Shmup Background — 3D</title>
 
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: dark; --ink: #9fb3c8; --acc: #7ff0ff; --pane: #080c17ee; }
   html, body { margin: 0; height: 100%; background: #04050b; overflow: hidden;
-               font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #9fb3c8; }
+               font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink);
+               touch-action: none; overscroll-behavior: none;
+               -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
   canvas { display: block; }
-  #hud   { position: fixed; left: 10px; top: 10px; pointer-events: none;
+
+  #hud   { position: fixed; left: 10px; top: calc(10px + env(safe-area-inset-top)); pointer-events: none;
            text-shadow: 0 1px 3px #000; white-space: pre; font-size: 11px; }
-  #help  { position: fixed; left: 10px; bottom: 10px; pointer-events: none;
+  #help  { position: fixed; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); pointer-events: none;
            text-shadow: 0 1px 3px #000; opacity: .55; font-size: 11px; }
-  #nav   { position: fixed; right: 12px; top: 10px; font-size: 11px; opacity: .75; }
-  #nav a { color: #7ff0ff; text-decoration: none; border-bottom: 1px solid #7ff0ff59; }
-  #nav a:hover { opacity: 1; }
+  #nav   { position: fixed; right: 12px; top: calc(10px + env(safe-area-inset-top)); font-size: 11px; opacity: .75; }
+  #nav a { color: var(--acc); text-decoration: none; border-bottom: 1px solid #7ff0ff59; }
+
+  /* ── 버튼 바 ─────────────────────────────────────────────────────────── */
+  #btns { position: fixed; right: 12px; top: calc(34px + env(safe-area-inset-top));
+          display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; width: 116px; }
+  #btns button, #vizctl button {
+          font: 600 11px/1 ui-monospace, Menlo, monospace; color: var(--ink);
+          background: #0d1424cc; border: 1px solid #2c3a55;
+          border-radius: 7px; padding: 9px 0; cursor: pointer; }
+  #btns button { min-height: 34px; }
+  #btns button.on { color: #04050b; background: var(--acc); border-color: var(--acc); }
+  #btns button:active { transform: translateY(1px); }
+
+  /* ── 터치 조작계 ─────────────────────────────────────────────────────── */
+  #pad, #fire { position: fixed; display: none; pointer-events: none; z-index: 5; }
+  #pad  { width: 104px; height: 104px; margin: -52px 0 0 -52px; border-radius: 50%;
+          border: 1.5px solid #7ff0ff44; background: #7ff0ff0d; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; margin: -21px 0 0 -21px;
+          border-radius: 50%; background: #7ff0ff33; border: 1.5px solid #7ff0ff88; }
+  #fire { right: calc(26px + env(safe-area-inset-right)); bottom: calc(30px + env(safe-area-inset-bottom));
+          width: 82px; height: 82px; border-radius: 50%; border: 1.5px solid #ffab5566;
+          background: #ffab5514; color: #ffcf9a; font: 600 12px/82px ui-monospace, Menlo, monospace;
+          text-align: center; }
+  #fire.on { background: #ffab5533; border-color: #ffab55; }
+  @media (pointer: coarse) {
+    #pad, #fire { display: block; }
+    #help { display: none; }
+    #hud  { font-size: 10px; }
+  }
+
+  /* ── WFC 연산 시각화 패널 ────────────────────────────────────────────── */
+  #viz { position: fixed; right: 12px; bottom: 12px; width: 372px; z-index: 20;
+         background: var(--pane); border: 1px solid #2c3a55; border-radius: 10px;
+         box-shadow: 0 12px 40px #000a; overflow: hidden; }
+  #viz[hidden] { display: none; }
+  #vizbar { display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+            background: #101a2ecc; border-bottom: 1px solid #2c3a55; cursor: move; }
+  #vizbar b { font-weight: 600; color: #cfe2f5; font-size: 11px; flex: 1; }
+  #vizclose { background: none; border: 0; color: var(--ink); font-size: 15px; cursor: pointer; padding: 0 2px; }
+  #vizcan { display: block; width: 100%; height: 234px; background: #05070f; }
+  #vizdom { display: flex; flex-wrap: wrap; gap: 2px; padding: 7px 9px 0; }
+  #vizdom span { font-size: 9px; padding: 2px 3px; border-radius: 3px; border: 1px solid transparent;
+                 background: #141d30; color: #3f4d66; }
+  #vizdom span.in  { background: #1d3350; color: #9fc4e8; }
+  #vizdom span.pick{ background: var(--acc); color: #04050b; border-color: #fff; }
+  #vizinfo { padding: 6px 9px; font-size: 10px; white-space: pre; color: #8ba0b8; min-height: 44px; }
+  #vizctl { display: flex; align-items: center; gap: 6px; padding: 0 9px 9px; }
+  #vizctl button { flex: 0 0 auto; padding: 7px 9px; }
+  #vizspd { flex: 1; min-width: 0; accent-color: var(--acc); }
+
+  @media (max-width: 760px) {
+    #viz { left: 0; right: 0; bottom: 0; width: auto; border-radius: 12px 12px 0 0; border-bottom: 0;
+           padding-bottom: env(safe-area-inset-bottom); }
+    #vizbar { cursor: default; padding: 10px 12px; }
+    #vizcan { height: 40vh; }
+    #vizinfo { min-height: 30px; }
+  }
 </style>
 
 <div id="hud"></div>
 <div id="nav"><a href="./2d.html">2D 버전 →</a></div>
-<div id="help">↑↓←→ / WASD 이동   SPACE 발사   R 시드변경   [ ] 속도   P 정지   C 카메라</div>
+<div id="btns">
+  <button data-act="cam">CAM</button>
+  <button data-act="viz">WFC</button>
+  <button data-act="pause">일시정지</button>
+  <button data-act="seed">시드</button>
+  <button data-act="slow">속도 −</button>
+  <button data-act="fast">속도 +</button>
+</div>
+<div id="help">↑↓←→ / WASD 이동   SPACE 발사   R 시드변경   [ ] 속도   P 정지   C 카메라   V 연산창</div>
+
+<div id="pad"><div id="knob"></div></div>
+<div id="fire">FIRE</div>
+
+<div id="viz" hidden>
+  <header id="vizbar"><b>WFC 솔버 — 밴드 연산</b><button id="vizclose" title="닫기">✕</button></header>
+  <canvas id="vizcan"></canvas>
+  <div id="vizdom"></div>
+  <div id="vizinfo"></div>
+  <div id="vizctl">
+    <button data-v="play">일시정지</button>
+    <button data-v="step">한 단계</button>
+    <button data-v="new">새 밴드</button>
+    <input id="vizspd" type="range" min="1" max="80" value="12" title="재생 속도">
+  </div>
+</div>
 
 <script type="module">
 "use strict";
 
 import * as THREE from './vendor/three.module.min.js';
 // 2D 버전(2d.html)과 완전히 동일한 솔버를 쓴다. 3D는 순수한 "뷰"일 뿐이다.
-import { TS, InfiniteWFC, nearDensity, hash2, mulberry32 } from './wfc.js';
+import { TS, InfiniteWFC, nearDensity, hash2, mulberry32, popcount } from './wfc.js';
 
 /* ══════════════════════════════════════════════════════════════════════════
    3D 뷰
@@ -126,21 +208,32 @@ let seed, wfc;
 function reset(s) {
   seed = s >>> 0;
   wfc = new InfiniteWFC(GRID_W, seed, { density: nearDensity });
+  viz.pending = false;                 // 새 솔버라 이전 캡처 요청은 무효
 }
-reset((Math.random() * 1e9) | 0);
-
 let camRow = 0, speed = 6, paused = false, camMode = 0;
 const shipPos = { x: 0, y: 0, vx: 0, vy: 0 };
 const bullets = [];
 const keys = new Set();
 
+/* ── 입력: 키보드 ─────────────────────────────────────────────────────── */
+const actions = {
+  cam:   () => { camMode = (camMode + 1) % 3; },
+  viz:   () => vizToggle(),
+  pause: () => { paused = !paused; syncButtons(); },
+  seed:  () => { reset((Math.random() * 1e9) | 0); camRow = 0; },
+  slow:  () => { speed = Math.max(0.5, speed / 1.25); },
+  fast:  () => { speed = Math.min(40, speed * 1.25); },
+};
+
 addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
   keys.add(e.code);
-  if (e.code === 'KeyR') { reset((Math.random() * 1e9) | 0); camRow = 0; }
-  if (e.code === 'KeyP') paused = !paused;
-  if (e.code === 'KeyC') camMode = (camMode + 1) % 3;
-  if (e.code === 'BracketRight') speed = Math.min(40, speed * 1.25);
-  if (e.code === 'BracketLeft')  speed = Math.max(0.5, speed / 1.25);
+  if (e.code === 'KeyR') actions.seed();
+  if (e.code === 'KeyP') actions.pause();
+  if (e.code === 'KeyC') actions.cam();
+  if (e.code === 'KeyV') actions.viz();
+  if (e.code === 'BracketRight') actions.fast();
+  if (e.code === 'BracketLeft')  actions.slow();
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -148,7 +241,61 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  vizResize();
 });
+
+document.getElementById('btns').addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.act;
+  if (a) actions[a]();
+});
+function syncButtons() {
+  document.querySelector('#btns [data-act="pause"]').classList.toggle('on', paused);
+  document.querySelector('#btns [data-act="viz"]').classList.toggle('on', viz.open);
+}
+
+/* ── 입력: 터치 ───────────────────────────────────────────────────────────
+   왼쪽 58%는 아날로그 스틱(누른 자리가 원점), 오른쪽은 발사.
+   키보드는 디지털(±1)이지만 스틱은 -1..1 연속값을 그대로 가속에 먹인다. */
+const PAD_R = 52;
+const touch = { stickId: null, dx: 0, dy: 0, fireIds: new Set() };
+const padEl = document.getElementById('pad'), knobEl = document.getElementById('knob');
+const fireEl = document.getElementById('fire');
+const cv = renderer.domElement;
+
+cv.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  e.preventDefault();
+  if (e.clientX > innerWidth * 0.58) { touch.fireIds.add(e.pointerId); fireEl.classList.add('on'); return; }
+  if (touch.stickId !== null) return;
+  touch.stickId = e.pointerId;
+  padEl.dataset.ox = e.clientX; padEl.dataset.oy = e.clientY;
+  padEl.style.left = e.clientX + 'px'; padEl.style.top = e.clientY + 'px';
+  padEl.style.opacity = 1;
+  setKnob(0, 0);
+});
+addEventListener('pointermove', e => {
+  if (e.pointerId !== touch.stickId) return;
+  const ox = +padEl.dataset.ox, oy = +padEl.dataset.oy;
+  let dx = (e.clientX - ox) / PAD_R, dy = -(e.clientY - oy) / PAD_R;
+  const m = Math.hypot(dx, dy);
+  if (m > 1) { dx /= m; dy /= m; }
+  touch.dx = dx; touch.dy = dy;
+  setKnob(dx, dy);
+}, { passive: true });
+function endPointer(e) {
+  if (e.pointerId === touch.stickId) {
+    touch.stickId = null; touch.dx = touch.dy = 0;
+    padEl.style.opacity = 0; setKnob(0, 0);
+  }
+  if (touch.fireIds.delete(e.pointerId) && !touch.fireIds.size) fireEl.classList.remove('on');
+}
+addEventListener('pointerup', endPointer);
+addEventListener('pointercancel', endPointer);
+function setKnob(dx, dy) {
+  knobEl.style.transform = `translate(${dx * PAD_R}px, ${-dy * PAD_R}px)`;
+}
+padEl.style.opacity = 0;
+padEl.style.transition = 'opacity .12s';
 
 /* ── WFC 격자 → 인스턴스 행렬 ─────────────────────────────────────────── */
 const HALF = GRID_W * TILE / 2;
@@ -212,8 +359,11 @@ let shootCd = 0;
 function update(dt) {
   camRow += speed * dt;
 
-  const ax = (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
-  const ay = (keys.has('ArrowUp')    || keys.has('KeyW') ? 1 : 0) - (keys.has('ArrowDown') || keys.has('KeyS') ? 1 : 0);
+  // 키보드는 ±1, 터치 스틱이 잡혀 있으면 그 아날로그 값이 우선한다
+  let ax = (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0) - (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0);
+  let ay = (keys.has('ArrowUp')    || keys.has('KeyW') ? 1 : 0) - (keys.has('ArrowDown') || keys.has('KeyS') ? 1 : 0);
+  if (touch.stickId !== null) { ax = touch.dx; ay = touch.dy; }
+
   shipPos.vx += ax * 46 * dt; shipPos.vy += ay * 34 * dt;
   shipPos.vx *= Math.pow(0.0022, dt); shipPos.vy *= Math.pow(0.0022, dt);
   shipPos.x = Math.max(-HALF + .8, Math.min(HALF - .8, shipPos.x + shipPos.vx * dt));
@@ -225,7 +375,8 @@ function update(dt) {
   ship.rotation.x = shipPos.vy * 0.018;
 
   shootCd -= dt;
-  if (keys.has('Space') && shootCd <= 0 && bullets.length < BULLET_CAP) {
+  const firing = keys.has('Space') || touch.fireIds.size > 0;
+  if (firing && shootCd <= 0 && bullets.length < BULLET_CAP) {
     bullets.push({ x: ship.position.x, y: ship.position.y, z: ship.position.z, t: 0 });
     shootCd = 0.09;
   }
@@ -242,7 +393,7 @@ function update(dt) {
   bulletMesh.count = bullets.length;
   bulletMesh.instanceMatrix.needsUpdate = true;
 
-  // 카메라 3종 (C 키)
+  // 카메라 3종 (C 키 / CAM 버튼)
   if (camMode === 0) {          // 기본: 뒤쪽 상단 추격
     camera.position.set(shipPos.x * .35, 7.4, camZ + 3.2);
     camera.lookAt(shipPos.x * .15, 1.0, camZ - 15);
@@ -256,6 +407,173 @@ function update(dt) {
   stars.position.z = camZ;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   WFC 연산 시각화 패널
+
+   솔버는 밴드 하나를 1ms 안에 풀어버려서 실시간으로는 볼 수가 없다.
+   그래서 실제 밴드 한 개의 연산을 통째로 기록(trace)해두고 느리게 재생한다.
+   보고 있는 건 시뮬레이션이 아니라 방금 이 맵을 만든 진짜 연산이다.
+
+   두 종류의 이벤트가 번갈아 나온다:
+     observe — 엔트로피(=남은 후보 수)가 가장 낮은 칸을 골라 하나로 확정
+     prop    — 그 확정이 인접 규칙을 타고 이웃 칸의 후보를 깎아내는 연쇄
+   관측 1회에 전파가 평균 열몇 번 일어나는 게 WFC의 본질이다.
+   ══════════════════════════════════════════════════════════════════════════ */
+const viz = {
+  open: false, pending: false, playing: true, eps: 12,
+  trace: null, idx: 0, W: 0, H: 0, top: 0,
+  dom: null, flash: null, kind: null, lastObs: null,
+  obs: 0, prop: 0, fail: 0,
+};
+
+const vizEl   = document.getElementById('viz');
+const vcan    = document.getElementById('vizcan');
+const vctx    = vcan.getContext('2d');
+const vdomEl  = document.getElementById('vizdom');
+const vinfoEl = document.getElementById('vizinfo');
+
+// 도메인 스트립: 타일 18종을 한 줄로 깔아두고 켜고 끈다
+const domCells = TS.names.map(n => {
+  const s = document.createElement('span'); s.textContent = n; vdomEl.appendChild(s); return s;
+});
+
+function vizToggle() {
+  viz.open = !viz.open;
+  vizEl.hidden = !viz.open;
+  syncButtons();
+  if (viz.open) { vizResize(); vizRequest(true); }
+}
+document.getElementById('vizclose').onclick = vizToggle;
+
+function vizResize() {
+  if (!viz.open) return;
+  const r = vcan.getBoundingClientRect(), d = Math.min(devicePixelRatio, 2);
+  vcan.width = Math.round(r.width * d); vcan.height = Math.round(r.height * d);
+  vctx.setTransform(d, 0, 0, d, 0, 0);
+}
+
+/** 다음 밴드의 연산을 기록 요청. force면 즉시 한 밴드를 앞당겨 생성한다. */
+function vizRequest(force) {
+  if (!viz.open || viz.pending) return;
+  viz.pending = true;
+  wfc.captureNextBand(tr => { viz.pending = false; vizLoad(tr); });
+  // 카메라보다 너무 앞서 생성해두면 메모리가 새므로 여유가 있을 때만 강제한다
+  if (force && wfc.top - camRow < 160) wfc.row(wfc.top + 1);
+}
+
+function vizLoad(tr) {
+  viz.trace = tr; viz.idx = 0;
+  viz.obs = viz.prop = viz.fail = 0; viz.lastObs = null;
+}
+
+function vizStep(n) {
+  const tr = viz.trace; if (!tr) return;
+  while (n-- > 0 && viz.idx < tr.length) {
+    const e = tr[viz.idx++];
+    if (e.k === 'init') {
+      viz.W = e.W; viz.H = e.H; viz.top = e.top;
+      viz.dom = Int32Array.from(e.dom);
+      viz.flash = new Float32Array(e.W * e.H);
+      viz.kind  = new Uint8Array(e.W * e.H);
+    } else if (!viz.dom) {
+      continue;                                   // init 이전 이벤트는 없음
+    } else if (e.k === 'observe') {
+      viz.dom[e.i] = 1 << e.chosen;
+      viz.flash[e.i] = 1; viz.kind[e.i] = 1;
+      viz.lastObs = e; viz.obs++;
+    } else if (e.k === 'prop') {
+      viz.dom[e.i] = e.to;
+      if (viz.flash[e.i] < .75) { viz.flash[e.i] = .75; viz.kind[e.i] = 2; }
+      viz.prop++;
+    } else if (e.k === 'fail') {
+      viz.flash[e.i] = 1; viz.kind[e.i] = 3; viz.fail++;
+    }
+  }
+}
+
+const VOID_C = [10, 14, 26], ROCK_C = [64, 80, 110], STN_C = [42, 128, 126];
+function vizDraw(dt) {
+  if (!viz.open || !viz.dom) return;
+  const W = viz.W, H = viz.H;
+  const cw = vcan.clientWidth, ch = vcan.clientHeight;
+  const cell = Math.min(cw / W, ch / H), g = Math.max(0.5, cell * 0.06);
+  const ox = (cw - cell * W) / 2, oy = (ch - cell * H) / 2;
+
+  vctx.clearRect(0, 0, cw, ch);
+  for (let r = 0; r < H; r++) {
+    for (let x = 0; x < W; x++) {
+      const i = r * W + x, d = viz.dom[i], n = popcount(d);
+      // r=0(앵커)이 아래. 월드 Y가 위로 자라므로 화면도 아래에서 위로 쌓인다.
+      const px = ox + x * cell, py = oy + (H - 1 - r) * cell;
+
+      let col;
+      if (n === 1) {                                  // 확정 → 타일 고유색
+        const t = 31 - Math.clz32(d), k = TS.meta[t].kind;
+        col = k === 'void' ? VOID_C : k === 'rock' ? ROCK_C : STN_C;
+      } else {                                        // 미확정 → 후보 수만큼 밝은 호박색
+        const u = (n - 1) / (TS.N - 1);
+        col = [30 + 150 * u, 26 + 100 * u, 20 + 30 * u];
+      }
+      const f = viz.flash[i];
+      if (f > 0.01) {
+        const hl = viz.kind[i] === 1 ? [255, 255, 255]
+                 : viz.kind[i] === 3 ? [255, 70, 70] : [128, 244, 255];
+        col = [0, 1, 2].map(c => col[c] + (hl[c] - col[c]) * f);
+        viz.flash[i] = f - dt * 2.6;
+      }
+      vctx.fillStyle = `rgb(${col[0] | 0},${col[1] | 0},${col[2] | 0})`;
+      vctx.fillRect(px + g, py + g, cell - g * 2, cell - g * 2);
+    }
+  }
+  // 앵커 행(동결) 표시
+  vctx.strokeStyle = '#7ff0ff55'; vctx.lineWidth = 1;
+  vctx.strokeRect(ox + .5, oy + (H - 1) * cell + .5, cell * W - 1, cell - 1);
+
+  // 도메인 스트립 — 마지막 관측 칸의 후보 집합과 선택 결과
+  const e = viz.lastObs;
+  for (let t = 0; t < TS.N; t++) {
+    const c = domCells[t];
+    c.className = !e ? '' : (t === e.chosen ? 'pick' : (e.mask & (1 << t)) ? 'in' : '');
+  }
+
+  const tr = viz.trace, done = !tr || viz.idx >= tr.length;
+  const at = e ? `(x ${e.i % W}, r ${(e.i / W) | 0})` : '—';
+  vinfoEl.textContent =
+    `밴드 y ${viz.top}..${viz.top + wfc.commitH}   이벤트 ${viz.idx}/${tr ? tr.length : 0}${done ? '  완료' : ''}\n` +
+    `관측 ${viz.obs}   전파 ${viz.prop}   모순 ${viz.fail}   전파/관측 ${viz.obs ? (viz.prop / viz.obs).toFixed(1) : '—'}\n` +
+    (e ? `최근 관측 ${at}  후보 ${popcount(e.mask)}개 → ${TS.names[e.chosen]}   동점 ${e.ties}칸`
+       : `최근 관측 —`);
+}
+
+document.getElementById('vizctl').addEventListener('click', ev => {
+  const v = ev.target.closest('button')?.dataset.v;
+  if (v === 'play') { viz.playing = !viz.playing; ev.target.textContent = viz.playing ? '일시정지' : '재생'; }
+  if (v === 'step') { viz.playing = false; document.querySelector('#vizctl [data-v="play"]').textContent = '재생'; vizStep(1); }
+  if (v === 'new')  { viz.trace = null; viz.idx = 0; vizRequest(true); }
+});
+document.getElementById('vizspd').addEventListener('input', e => viz.eps = +e.target.value);
+
+// 데스크톱에서만 창처럼 끌어 옮긴다
+{
+  const bar = document.getElementById('vizbar');
+  let id = null, sx = 0, sy = 0, bx = 0, by = 0;
+  bar.addEventListener('pointerdown', e => {
+    if (matchMedia('(max-width: 760px)').matches || e.target.tagName === 'BUTTON') return;
+    const r = vizEl.getBoundingClientRect();
+    id = e.pointerId; sx = e.clientX; sy = e.clientY; bx = r.left; by = r.top;
+    vizEl.style.right = 'auto'; vizEl.style.bottom = 'auto';
+    vizEl.style.left = bx + 'px'; vizEl.style.top = by + 'px';
+    bar.setPointerCapture(id);
+  });
+  bar.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    const r = vizEl.getBoundingClientRect();
+    vizEl.style.left = Math.max(0, Math.min(innerWidth  - r.width,  bx + e.clientX - sx)) + 'px';
+    vizEl.style.top  = Math.max(0, Math.min(innerHeight - r.height, by + e.clientY - sy)) + 'px';
+  });
+  bar.addEventListener('pointerup', e => { if (e.pointerId === id) id = null; });
+}
+
 /* ── 루프 ─────────────────────────────────────────────────────────────── */
 const HUD = document.getElementById('hud');
 let last = performance.now(), fps = 60, acc = 0, frames = 0;
@@ -265,6 +583,13 @@ function frame(now) {
   if (!paused) update(dt);
   syncInstances();
   renderer.render(scene, camera);
+
+  if (viz.open) {
+    if (viz.playing) vizStep(viz.eps);
+    // 재생이 끝나면 다음 밴드를 자동으로 이어받는다
+    if (viz.trace && viz.idx >= viz.trace.length) vizRequest(paused);
+    vizDraw(dt);
+  }
 
   acc += dt; frames++;
   if (acc > 0.4) { fps = frames / acc; acc = 0; frames = 0; }
@@ -277,9 +602,13 @@ function frame(now) {
     `density ${nearDensity(camRow).toFixed(2)}`;
   requestAnimationFrame(frame);
 }
+
+reset((Math.random() * 1e9) | 0);
+syncButtons();
 requestAnimationFrame(frame);
 
 // 헤드리스 테스트에서 들여다볼 수 있게
-window.__wfc = { get wfc() { return wfc; }, TS, InfiniteWFC, nearDensity,
-                 get counts() { return { rock: lastRock, stn: lastStn }; } };
+window.__wfc = { get wfc() { return wfc; }, TS, InfiniteWFC, nearDensity, viz,
+                 get counts() { return { rock: lastRock, stn: lastStn }; },
+                 actions };
 </script>
